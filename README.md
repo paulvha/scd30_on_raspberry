@@ -19,6 +19,15 @@ adjusted and extended for stable working.
  * BCM2835 library (http://www.airspayce.com/mikem/bcm2835/)
  * twowire library (https://github.com/paulvha/twowire)
 
+# version 2.0 / october 2018
+ * by Paul van Haastrecht (paulvha@hotmail.com)
+ * - some bug changes and code enhancements
+ * - added softreset
+ * - updated debug display
+ * - changed single measurement method
+ * - added option to output temperature in Fahrenheit instead of celsius
+ * - extended documentation
+
 ## Software installation
 
 Make your self superuser : sudo bash
@@ -52,7 +61,7 @@ Obtain the latest version from : https://github.com/paulvha/scd30_on_raspberry
 1. Download the zip-file (clone or download / download zip-file) in the wanted directory
 2. unzip scd30_on_raspberry-master.zip (*1)
 3. cd scd30_on_raspberry-master
-4. create the executable : make  
+4. create the executable : make  \
 5. To run you have to be as sudo ./scd30 -h ….
 
 The “make” command will create an SCD30 monitor only. The command “make BUILD=DYLOS” will create an executable that is able to monitor both the SCD30 as well as the DYLOS 1700.

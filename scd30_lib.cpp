@@ -11,11 +11,19 @@
  *
  * This library handles the initialization of the SCD30 and outputs
  * CO2 levels, relative humidty, and temperature.
+ * 
  ******************************************************************
- * October 2018 : Changed, enhanced and extended for raspberry Pi
+ * October 2018 : Changed, enhanced and extended for Raspberry Pi
  * by Paul van Haastrecht (paulvha@hotmail.com)
  * 
- * version 1.0 initial Raspberry Pi
+ * version 1.0 : initial Raspberry Pi
+ * 
+ * version 2.0 : October 2018  
+ * - some bug changes and code enhancements
+ * - added softreset
+ * - updated debug display
+ * - changed single measurement method
+ * 
  *  
  * Resources / dependencies:
  * BCM2835 library (http://www.airspayce.com/mikem/bcm2835/)
@@ -45,10 +53,12 @@
  */
 int SCD_DEBUG = 0;
 
-// Global main info
-float co2 = 0;
-float temperature = 0;
-float humidity = 0;
+/* Global main info */
+float   _co2 = 0;
+float   _temperature = 0;
+float   _humidity = 0;
+bool    _asc = true;
+uint16_t _interval = 2;
 
 /* These track the staleness of the current data
  * This allows us to avoid calling readMeasurement() every time 
@@ -62,9 +72,11 @@ bool temperatureHasBeenReported = true;
 TwoWire TWI;
 
 /* used as part of p_printf() */
-int NoColor=0;
+bool NoColor=false;
 
-/* Constructor */
+/******************************************* 
+ * @brief Constructor 
+ *******************************************/
 SCD30::SCD30(void)
 {
     settings.sda = DEF_SDA;
@@ -75,27 +87,33 @@ SCD30::SCD30(void)
     settings.pullup = false;
 }
 
-/* Initialize the port and SCD30 
- * ASC = set / not set Auto Self Calibration
- * interval = continuous measurement every X seconds
- */
+/************************************************************** 
+ * @brief Initialize the port and SCD30 
+ * @param asc  true : perform ASC
+ * @param interval >0 : set for continuous mode, else stop.
+ * 
+ * @return  true = OK, false is error 
+ **************************************************************/
 bool SCD30::begin(bool asc, uint16_t interval) {
+    
+    _interval = interval;   // save interval period
+    _asc = asc;             // save automatic Self Calibration
     
     /* Enable internal BCM2835 pull-up resistors on the SDA and SCL
      * GPIO. BUT not on GPIO-2 and GPIO-3. The Raspberry has already 
      * external 1k8 pullup resistors on GPIO 2 and 3
      * 
-     * The SCD30 does not seem to have them (looking at the scope signals)
+     * The SCD30 does not have them (checked with scope)
      *
-     * While this works it is better to have external resistors for 
-     * signal quality. Hence pull-up is disabled by default.
+     * While this works, it is better to have external resistors (10K)
+     * for signal quality. Hence pull-up is disabled by default.
      */
      
     if (settings.pullup) TWI.setPullup();
     
     /* initialize the I2C hardware */
     if (TWI.begin(settings.I2C_interface,settings.sda,settings.scl) != TW_SUCCESS){
-        if (SCD_DEBUG > 0) p_printf(RED, (char *) "Can't setup i2c !\n");
+        if (SCD_DEBUG > 0) p_printf(RED, (char *) "Can't setup I2c !\n");
         return(false);
     }
   
@@ -109,21 +127,35 @@ bool SCD30::begin(bool asc, uint16_t interval) {
      * Setting it to max 200000 will allow for 200ms seconds as the interface 
      * guide states it could be up to 150ms once a day during calibration 
      */
+     
     if (SCD_DEBUG > 0) p_printf(YELLOW, (char *) "setting clock stretching to 20000 (~200ms)\n");
     TWI.setClockStretchLimit(200000);
     
+    /* initialize the SCD30 */
+    return(begin_scd30());
+}
+
+/***********************************************************
+ * @brief Initialize the SCD30 
+ * 
+ * is using _asc and _interval variables
+ * 
+ * @return  true = OK, false is error 
+ ***********************************************************/
+bool SCD30::begin_scd30() 
+{
     /* if continuous measurement is requested */
-    if (interval > 0)
+    if (_interval > 0)
     {
         /* Check for device to respond correctly */
         if(beginMeasuring() == true)     //Start continuous measurements
         {
             /* set interval for continuous measurement start it else stop */
-            if (setMeasurementInterval(interval) == false) return(false); 
+            if (setMeasurementInterval(_interval) == false) return(false); 
         }
 
-        /* enable or disable Automatic Self Calibration       */
-        return (setAutoSelfCalibration(asc));
+        /* enable or disable Automatic Self Calibration */
+        return (setAutoSelfCalibration(_asc));
      }
      else
      {
@@ -132,21 +164,20 @@ bool SCD30::begin(bool asc, uint16_t interval) {
 }
 
 /********************************************************************
- * close Hardware correctly on the Raspberry Pi
+ * @brief close hardware correctly on the Raspberry Pi
  * 
  * There is NO change to the values stored on the SCD30. That could
  * be added here if needed.
  ********************************************************************/
- 
 void SCD30::close(void) {
     TWI.close();
 }
 
 /************************************************************
- * Returns the latest available CO2 level.If the current level has 
- * already been reported, trigger a new read 
+ * @brief Returns the latest available CO2 level.
+ * 
+ * If the current level has already been reported, trigger a new read 
  ****************************************************************/
- 
 uint16_t SCD30::getCO2(void) {
     
   /* trigger new read if needed */  
@@ -155,14 +186,14 @@ uint16_t SCD30::getCO2(void) {
 
   co2HasBeenReported = true;
 
-  return (uint16_t)co2; //Cut off decimal as co2 is 0 to 10,000
+  return (uint16_t)_co2; //Cut off decimal as co2 is 0 to 10,000
 }
 
 /********************************************************************
- * Returns the latest available humidity
+ * @brief Returns the latest available humidity
+ * 
  * If the current level has already been reported, trigger a new read 
  *********************************************************************/
-
 float SCD30::getHumidity(void) {
   
   /* trigger new read if needed */  
@@ -171,14 +202,14 @@ float SCD30::getHumidity(void) {
 
   humidityHasBeenReported = true;
 
-  return(humidity);
+  return(_humidity);
 }
 
 /*****************************************************************
- * Returns the latest available temperature in Celsius
+ * @brief Returns the latest available temperature in Celsius
+ * 
  * If the cache has already been reported, perform a new read
  *****************************************************************/
-
 float SCD30::getTemperature(void) {
   
   /* trigger new read if needed */    
@@ -187,13 +218,12 @@ float SCD30::getTemperature(void) {
 
   temperatureHasBeenReported = true;
 
-  return(temperature);
+  return(_temperature);
 }
 
-/**********************************
- *  get temperature in Fahrenheit 
- **********************************/
-
+/*******************************************
+ * @brief Return temperature in Fahrenheit 
+ ******************************************/
 float SCD30::getTemperatureF(void) {
     
     float output = getTemperature();
@@ -202,8 +232,8 @@ float SCD30::getTemperatureF(void) {
     return(output);
 }
 
-/****************************************
- * read serial number from SCD30
+/******************************************************************
+ * @brief read serial number from SCD30
  *
  * format 9 digits
  *  digit 1
@@ -216,17 +246,17 @@ float SCD30::getTemperatureF(void) {
  *  digit 6
  *  crc
  *
- * provided val buffer must be defined at least 7 digits
- *  6 serial + 0x0 termination
+ * @param val : store the serial number
+ *         provided val buffer must be defined at least 7 digits
+ *         6 serial + 0x0 termination
  *
- * return
- *  true if OK (serial number in val-buffer)
- *  false in case of error
- ***********************************************/
- 
+ * @return true if OK (serial number in val-buffer)
+ *          false in case of error
+ * 
+ *****************************************************************/
 bool SCD30::getSerialNumber(char *val) {
     
-    uint8_t buff[10],data[2], crc;
+    uint8_t buff[10],data[2];
     int     x, y;
     
     if (SCD_DEBUG >0)
@@ -252,16 +282,8 @@ bool SCD30::getSerialNumber(char *val) {
           data[y++] = buff[x];
           break;
 
-        case 2:             // handle CRC
-        case 5:
-        case 8:
-
-          crc = computeCRC8(data,(uint8_t) 2);
-          if (buff[x] != crc)
-          {
-            if (SCD_DEBUG > 1) p_printf(RED, (char *) "crc error : expected %x, got %x\n", crc, buff[x]);
-            return(false);
-          }
+        default:           // handle CRC
+          if (checkCrc(data, 2, buff[x]) == false) return(false);
           y = 0;
           break;
        }
@@ -273,7 +295,7 @@ bool SCD30::getSerialNumber(char *val) {
 }
 
 /*************************************************************
- *  Enables or disables the ASC See 1.3.6
+ * @brief enables or disables the ASC See 1.3.6
  *
  * ASC status is saved in non-volatile memory. When the sensor is 
  * powered down while ASC is activated SCD30 will continue with 
@@ -281,32 +303,40 @@ bool SCD30::getSerialNumber(char *val) {
  *
  * At this moment it is not able to detect whether the self 
  * calibration has been done or finished
+ * 
+ * @return  true = OK, false is error 
  ****************************************************************/
-
 bool SCD30::setAutoSelfCalibration(bool enable) {
     
-  if (enable)
-    return(sendCommand(COMMAND_AUTOMATIC_SELF_CALIBRATION, 1)); //Activate continuous ASC
-  else
-    return(sendCommand(COMMAND_AUTOMATIC_SELF_CALIBRATION, 0)); //Deactivate continuous ASC
+    _asc = enable;
+    
+    if (_asc)
+    {
+        return(sendCommand(COMMAND_AUTOMATIC_SELF_CALIBRATION, 1)); //Activate continuous ASC
+    }
+    else
+    {
+        return(sendCommand(COMMAND_AUTOMATIC_SELF_CALIBRATION, 0)); //Deactivate continuous ASC
+    }
 }
 
 /*********************************************************
- *  Set the temperature offset. See 1.3.8.
+ * @brief Set the temperature offset. See 1.3.8.
  *
  * Temperature offset value is saved in non-volatile memory.
  * The last set value will be used for temperature offset compensation 
  * after repowering.
  *
- * All this does for now is lower the SCD30 temperature reading to with 
+ * All this does for now is lower the SCD30 temperature reading with 
  * the offset value over a period of 10 min, while increasing the humidity 
  * readings. NO impact on the CO2 readings.
  *
  * The value can NOT be negative as it will cause uncontrolled 
  * temperature and humidity results.
+ * 
+ * @return  true = OK, false is error 
  *
  *****************************************************************/
-
 bool SCD30::setTemperatureOffset(float tempOffset) {
   
   /* can not be negative number */
@@ -320,43 +350,56 @@ bool SCD30::setTemperatureOffset(float tempOffset) {
 }
 
 /************************************************************
- *  Set the altitude compenstation. See 1.3.9.
+ * @brief Set the altitude compenstation. See 1.3.9.
  *
  * Setting altitude is disregarded when an ambient pressure is 
  * given to the sensor, Altitude value is saved in non-volatile memory. 
  * The last set value will be used for altitude compensation after repowering.
  *
- * Setting the argument to zero will deactivate the ambient pressure compensation
+ * Setting the argument to zero will deactivate the 
+ * ambient pressure compensation
+ * 
+ * @return  true = OK, false is error 
+ * 
  ***************************************************************/
- 
 bool SCD30::setAltitudeCompensation(uint16_t altitude) {
+    
+  // 700 mbar ~ 3040M altitude, 1200mbar ~ -1520
+  if (altitude < -1520 || altitude > 3040) return(false);
+  
   return(sendCommand(COMMAND_SET_ALTITUDE_COMPENSATION, altitude));
 }
 
 /***************************************************************
- * Set the pressure compensation. 
+ * @brief Set the pressure compensation. 
+ * 
  * This is passed during measurement startup. mbar can be 700 to 1200
  *
  * Setting altitude is disregarded when an ambient pressure is 
  * given to the sensor, pressure value is saved in non-volatile memory. 
  * The last set value will be used for altitude compensation after repowering.
  *
- * Setting the argument to zero will deactivate the ambient pressure compensation
+ * Setting the argument to zero will deactivate the 
+ * ambient pressure compensation
+ * 
+ * @return  true = OK, false is error 
+ * 
  ****************************************************************/
-
 bool SCD30::setAmbientPressure(uint16_t pressure_mbar) {
   return (beginMeasuring(pressure_mbar));
 }
 
 /*****************************************************************
- *  Set Forced Recalibration value (FRC) see 1.3.7
+ * @brief Set Forced Recalibration value (FRC) see 1.3.7
  *
  * Setting a reference CO2 concentration by the here described 
  * method will always overwrite the settings from ASC (see chapter 1.3.6) 
  * and vice-versa. The reference CO2 concentration has to be within 
  * the range 400 ppm ≤ c ref (CO 2 ) ≤ 2000 ppm.
+ * 
+ * @return  true = OK, false is error 
+ * 
  ******************************************************************/
-
 bool SCD30::setForceRecalibration(uint16_t val) {
 
     if(val < 400 || val > 2000) return(false);   //Error check
@@ -367,14 +410,15 @@ bool SCD30::setForceRecalibration(uint16_t val) {
 }
 
 /*****************************************************************
- * Begins continuous measurements see 1.3.1
+ * @brief Begins continuous measurements see 1.3.1
  *
  * Continuous measurement status is saved in non-volatile memory. 
  * When the sensor is powered down while continuous measurement mode 
  * is active SCD30 will measure continuously after repowering without 
  * sending the measurement command.
  * 
- * Returns true if successful
+ * @return  true = OK, false is error 
+ * 
  *****************************************************************/
 
 bool SCD30::beginMeasuring(uint16_t pressureOffset) {
@@ -382,7 +426,8 @@ bool SCD30::beginMeasuring(uint16_t pressureOffset) {
   /* Error check */ 
   if(pressureOffset < 700 || pressureOffset > 1200) pressureOffset = 0; 
   
-  if (SCD_DEBUG > 0) p_printf(YELLOW, (char *) "Begin measuring with pressure offset %d\n", pressureOffset);
+  if (SCD_DEBUG > 0) 
+    p_printf(YELLOW, (char *) "Begin measuring with pressure offset %d\n", pressureOffset);
 
   return(sendCommand(COMMAND_CONTINUOUS_MEASUREMENT, pressureOffset));
 }
@@ -393,56 +438,146 @@ bool SCD30::beginMeasuring(void) {
 }
 
 /*******************************************************************
- * Stop continuous measurement. see 1.3.2
+ * @brief soft reset see 1.3.10
  * 
- * return:
- *  true = OK
- *  false  = error
+ * Not only will it reset, but also re-instruct the requested settings
+ * for the SCD30.
+ * 
+ * @return  true = OK, false is error 
+ * 
  *********************************************************************/
+bool SCD30::SoftReset(void) {
+    
+  if (sendCommand(CMD_SOFT_RESET) != true) return(false);
+  
+  // reload parameters
+  return( begin_scd30() );
+}
 
+/*******************************************************************
+ * @brief Stop continuous measurement. see 1.3.2
+ * 
+ * Continuous measurement is stored in the SCD30 and restarted after 
+ * power-on. It might be needed to stop this (e.g. in case of single
+ * shot measurement) 
+ * 
+ * @return  true = OK, false is error 
+ * 
+ *********************************************************************/
 bool SCD30::StopMeasurement(void) {
   return(sendCommand(CMD_STOP_MEAS));
 }
 
 /*******************************************************************
- * Sets interval between measurements
- * 2 seconds to 1800 seconds (30 minutes)
+ * @brief Sets interval between measurements 2 <> 1800 seconds (30 minutes)
  * 
- * return
- *  true = OK
- *  false  = error
+ * @return  true = OK, false is error 
+ * 
  ******************************************************************/
-
 bool SCD30::setMeasurementInterval(uint16_t interval) {
     
-  if (interval < 2 || interval > 1800) return(false);
-  
-  if (SCD_DEBUG > 0) p_printf(YELLOW, (char *) "set measurement interval %d\n", interval);
+  if (interval < 2 || interval > 1800) 
+  {
+    if (SCD_DEBUG > 0) p_printf(RED, (char *) "invalid measurement interval %d\n", interval);
+    return(false);
+  }
 
-  return(sendCommand(COMMAND_SET_MEASUREMENT_INTERVAL, interval));
+  // save new setting
+  _interval = interval;
+
+  return(sendCommand(COMMAND_SET_MEASUREMENT_INTERVAL, _interval));
 }
 
 /****************************************************************
- * Perform a single measurement
+ * @brief Perform a single measurement
  * 
- * first call stopMeasurement() to stop any continuous reading which
- * starts automatically after power on (if set before last power-off)
+ * The user program should first call stopMeasurement() to stop any 
+ * continuous reading which starts automatically after power on 
+ * (if it was set before last power-off)
  * 
- * return
- *  true = OK
- *  false  = error
+ * ///////////////////////////////////////////////////////////////
+ * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ * The single command "CMD_START_SINGLE_MEAS" is not working well 
+ * on the SCD30. (this has been confirmed by supplier)
+ * 
+ * Example : 
+ *  - Running in continuous mode 10x. CO2 value of 735 - 740
+ *  - started single measurement.
+ *     first    736
+ *     second   1149
+ *     third    0
+ *     fourth   0
+ *     etc..
+ *  - Now starting continuous mode again: starts with zero and takes about
+ *    20 reads in continuous mode to return to a value around 740. 
+ * 
+ * Hence pseudo single measurement is implemented in this driver
+ *  start continuous, interval 2 second
+ *  perform a read
+ *  stop continuous
+ * 
+ * it will take max. 4 seconds for the first result !
+ * 
+ * The user program should NOT check for data_available(), but
+ * get the CO2, temperature and humidity upon a return of true
+ * 
+ * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ * ////////////////////////////////////////////////////////////////
+ * @return  true = OK, false is error 
+ * 
  ******************************************************************/
-
 bool SCD30::StartSingleMeasurement(void) {
-  return(sendCommand(CMD_START_SINGLE_MEAS, 0x0000));
+     /* see remark above */
+    //return(sendCommand(CMD_START_SINGLE_MEAS, 0x0000));
+  
+    int retry = 10;
+    bool stat = false;
+    
+    /* save current ASC and interval setting */
+    bool save_asc = _asc;
+    uint16_t save_interval = _interval;
+    
+    /* start continuous */
+    _asc = false;
+    _interval = 2;
+    
+    if (begin_scd30() == false)  goto stop_sm;
+
+    /* wait for max x times for data available from SCD30 */
+    do
+    {
+        // check for data
+        stat = dataAvailable();
+        
+        // if not available
+        if (stat == false)  
+        {
+            sleep(1);
+            
+            if (retry-- == 0) goto stop_sm;
+        }
+        
+    } while (stat == false);
+    
+    /* if data available, read it */    
+    if (stat == true) stat = readMeasurement();
+
+stop_sm:
+    
+    /* stop measurement and restore */
+    StopMeasurement();   
+    _asc = save_asc;
+    _interval = save_interval;
+
+    return(stat);
 }
 
 /****************************************************************
- * checks the data ready status register
+ * @brief checks the data ready status register. see 1.3.4
  * 
- * Returns true when data is available. see 1.3.4
+ * @return : true if available, false if not or error
+ * 
  ****************************************************************/
-
 bool SCD30::dataAvailable() {
     
     uint8_t data[3];
@@ -465,10 +600,14 @@ bool SCD30::dataAvailable() {
 ///// low level routines ///////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////
 
-/*************************************
- * read amount of bytes from the SCD30
- *************************************/
-
+/************************************************
+ * @brief read amount of bytes from the SCD30
+ * @param buff : buffer to hold the data read
+ * @param len : number of bytes to read
+ * 
+ * @return true if OK, false in case of error
+ * 
+ ************************************************/
 bool SCD30::readbytes(char *buff, uint8_t len) {
     
     Wstatus result;
@@ -488,7 +627,7 @@ bool SCD30::readbytes(char *buff, uint8_t len) {
         /* if failure, then retry as long as retrycount has not been reached */
         if (result != I2C_OK)
         {
-            if (SCD_DEBUG > 1) p_printf(YELLOW, (char *) " read retrying %d\n", result);
+            if (SCD_DEBUG > 1) p_printf(YELLOW, (char *) " read retrying. result %d\n", result);
             if (retry-- > 0) continue;
         }
  
@@ -517,7 +656,16 @@ bool SCD30::readbytes(char *buff, uint8_t len) {
     }
 }
 
-/* check CRC for correct received information */
+/*****************************************************************
+ * @brief  check CRC for correct received information 
+ * 
+ * @param data : data to calculate the CRC from
+ * @param len : number of bytes in data
+ * @param crc_rec : received CRC from SCD30
+ * 
+ * @return CRC values are the same, false in case of difference
+ * 
+ *****************************************************************/
 bool SCD30::checkCrc(uint8_t *data, uint8_t len, uint8_t crc_rec) {
       
       uint8_t crc = computeCRC8(data, len);
@@ -530,13 +678,15 @@ bool SCD30::checkCrc(uint8_t *data, uint8_t len, uint8_t crc_rec) {
       
       return(true);
 }
-/***********************************************
- * Get 18 bytes from SCD30. see 1.3.5
+
+/****************************************************************
+ * @brief read CO2, Temperature and humidity from SCD30. see 1.3.5
  *
  * Updates global variables with floats
  * 
- * Returns true if success
- ***********************************************/
+ * @return true if OK, false in case of error
+ * 
+ ****************************************************************/
 bool SCD30::readMeasurement(){
     
   uint8_t data[2];
@@ -614,9 +764,9 @@ bool SCD30::readMeasurement(){
     }
   
   /* Now copy the uint32s into their associated floats */
-  memcpy(&co2, &tempCO2, sizeof(co2));
-  memcpy(&temperature, &tempTemperature, sizeof(temperature));
-  memcpy(&humidity, &tempHumidity, sizeof(humidity));
+  memcpy(&_co2, &tempCO2, sizeof(_co2));
+  memcpy(&_temperature, &tempTemperature, sizeof(_temperature));
+  memcpy(&_humidity, &tempHumidity, sizeof(_humidity));
 
   /* Mark our global variables as fresh */
   co2HasBeenReported = false;
@@ -627,29 +777,32 @@ bool SCD30::readMeasurement(){
 }
 
 /************************************************************
- * Set for debugging the driver
+ * @brief Set for debugging the driver
  *
+ * @param val : action to be performed
  * 0 = disable debug messages
  * 1 = sent/receive messages
  * 2 = like 1 + protocol errors
  *
  * This can be called BEFORE performing the begin() call.
  ************************************************************/
-
 void SCD30::setDebug(int val) {
  
     SCD_DEBUG = val;
     
     // if level 2 enable I2C driver messages
     if (SCD_DEBUG == 2) TWI.setDebug(true);
+    else TWI.setDebug(false);
+    
 }
 
 /*******************************************************
- *  decode the command that is being sent 
+ * @brief decode the command that is being sent 
+ * @param command : SCD30 command
  *******************************************************/
 void SCD30::debug_cmd(uint16_t command) {
     
-    p_printf(YELLOW, (char *) "Command 0x%x : ", command);
+    p_printf(YELLOW, (char *) "Command 0x%04x : ", command);
 
     switch(command)
     {
@@ -695,29 +848,31 @@ void SCD30::debug_cmd(uint16_t command) {
     }
 }
 
-/****************************************
- * Display the clock stretch info
- ****************************************/
+/**************************************************
+ * @brief Display the clock stretch info for debug
+ **************************************************/
 void SCD30::DispClockStretch() {
     TWI.DispClockStretch();
 }
 
 /*******************************************************
- * Sends a command along with arguments and CRC
+ * @brief Sends a command along with arguments and CRC
  * 
- * return
- *  true = OK
- *  false = error
+ * @param command : SCD30 command 
+ * @param arguments : command arugments to add
+ * 
+ * @return true if OK, false in case of error
  ********************************************************/
 bool SCD30::sendCommand(uint16_t command, uint16_t arguments) {
     return(sendCommand(command, arguments, 5));
 }
 
 /**********************************************************
- * Sends just a command, no arguments, no CRC
- * return
- *  true = OK
- *  false = error
+ * @brief Sends just a command, no arguments, no CRC
+ * 
+ * @param command : SCD30 command 
+ * 
+ * @return true if OK, false in case of error
  **********************************************************/
 bool SCD30::sendCommand(uint16_t command) {
     return(sendCommand(command, 0x0, 2));
@@ -725,15 +880,15 @@ bool SCD30::sendCommand(uint16_t command) {
 
 /*******************************************************
  * Sends a command to SCD30
+ * @brief Sends a command to 
  * 
- *  if  len = 2 only command
- *  else command + arguments + CRC
+ * @param command : SCD30 command 
+ * @param arguments : command arugments to add
+ * @param len : if > 2 arguments and CRC are added
+ *               else only the command is sent
  * 
- * return
- *  true = OK
- *  false = error
+ * @return true if OK, false in case of error
  ********************************************************/
-
 bool SCD30::sendCommand(uint16_t command, uint16_t arguments, uint8_t len)
 {
     uint8_t buff[5];
@@ -749,7 +904,7 @@ bool SCD30::sendCommand(uint16_t command, uint16_t arguments, uint8_t len)
        debug_cmd(command);
        
        if (len > 2)
-        p_printf(YELLOW, (char *)", arguments 0x%x\n",arguments);
+        p_printf(YELLOW, (char *)", arguments 0x%04x\n",arguments);
        else
         printf("\n");
     }
@@ -802,14 +957,21 @@ bool SCD30::sendCommand(uint16_t command, uint16_t arguments, uint8_t len)
 }
 
 /************************************************************************
+ * @brief calculate CRC
+ * 
+ * @param data : bytes to calculate CRC from
+ * @param len : number of bytes in data
+ * 
+ * @return : calculated CRC
+ * 
  * Given an array and a number of bytes, this calculate CRC8 for those bytes
  * CRC is only calc'd on the data portion (two bytes) of the four bytes being sent
  * From: http://www.sunshine2k.de/articles/coding/crc/understanding_crc.html
  * Tested with: http://www.sunshine2k.de/coding/javascript/crc/crc_js.html
  * x^8+x^5+x^4+1 = 0x31
  ***********************************************************************/
-uint8_t SCD30::computeCRC8(uint8_t data[], uint8_t len)
-{
+uint8_t SCD30::computeCRC8(uint8_t data[], uint8_t len) {
+    
   uint8_t crc = 0xFF; //Init with 0xFF
 
   for (uint8_t x = 0 ; x < len ; x++)
@@ -829,12 +991,12 @@ uint8_t SCD30::computeCRC8(uint8_t data[], uint8_t len)
 }
 
 /*********************************************************************
- * Display in color
+ * @brief Display in color
  * @param format : Message to display and optional arguments
  *                 same as printf
  * @param level :  1 = RED, 2 = GREEN, 3 = YELLOW 4 = BLUE 5 = WHITE
  * 
- *  if NoColor was set, output is always WHITE.
+ * if NoColor was set, output is always WHITE.
  *********************************************************************/
 void p_printf(int level, char *format, ...) {
     

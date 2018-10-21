@@ -10,6 +10,13 @@
  * 
  * version 1.0 initial Raspberry Pi
  * 
+ * version 2.0 : October 2018  
+ * - some bug changes and code enhancements
+ * - added softreset
+ * - updated debug display
+ * - changed single measurement method
+ * - added option to output temperature in Fahrenheit instead of celsius
+ * 
  * Resources / dependencies:
  * BCM2835 library (http://www.airspayce.com/mikem/bcm2835/)
  * twowire library (https://github.com/paulvha/twowire)
@@ -57,7 +64,7 @@ extern "C" {
 typedef struct dylos
 {
     char     port[MAXBUF];   // connected port (like /dev/ttyUSB0)
-    bool     include;        // 1 = include
+    bool     include;        // true = include
     uint16_t value_pm10;      // measured value PM10 DC1700
     uint16_t value_pm1;       // Measured value PM1  DC1700
 } dylos;
@@ -67,19 +74,20 @@ typedef struct dylos
 typedef struct scd_par
 {
     /* option SCD30 parameters */
-    bool asc;                  // set Automatic Self Calibration (ASC)
-    bool stop_cm;              // do not start continuous measurement
+    bool stop_cm;              // stop continuous measurement
     bool perform_single;       // perform a single measurement
     uint16_t interval;          // sample interval. 2 <> 1800 seconds
     int16_t frc;               // SCD30 forced recalibration  400 <>2000 ppm
     int16_t temp_offset;       // Temperature offset. 0 <> 25C
     int16_t altitude;          // altitude in meters -1520 <> 3040 meter
     int16_t pressure;          // pressure in Mbar 700 <> 1200 mbar
+    bool    asc;                // true to perform Automatic Self calibration
     
     /* option program variables */
     uint16_t loop_count;        // number of measurement
     uint16_t loop_delay;        // loop delay in between measurements
     bool timestamp;             // include timestamp in output
+    bool tempCel;               // show temperature in Celsius or Fahrenheit
     int verbose;                // verbose level
     
 #ifdef DYLOS                    // DYLOS monitor option
@@ -90,7 +98,7 @@ typedef struct scd_par
 } scd_par;
  
 /*********************************************************************
-*  close hardware and program correctly
+*  @brief close hardware and program correctly
 **********************************************************************/
 void closeout()
 {
@@ -106,7 +114,9 @@ void closeout()
 }
 
 /*********************************************************************
-** catch signals to close out correctly 
+* @brief catch signals to close out correctly 
+* @param  sig_num : signal that was raised
+* 
 **********************************************************************/
 void signal_handler(int sig_num)
 {
@@ -127,9 +137,9 @@ void signal_handler(int sig_num)
     }
 }
 
-/******************
-** setup signals 
-*******************/
+/*****************************************
+ * @brief setup signals 
+ *****************************************/
 void set_signals()
 {
     struct sigaction act;
@@ -145,14 +155,15 @@ void set_signals()
     sigaction(SIGKILL,&act, NULL);
 }
 
-/***********************
- *  generate timestamp
- ***********************/  
-void add_time_stamp()
+/*********************************************
+ * @brief generate timestamp
+ * 
+ * @param buf : returned the timestamp
+ *********************************************/  
+void get_time_stamp(char * buf)
 {
     time_t ltime;
     struct tm *tm ;
-    char buf[30];
     
     ltime = time(NULL);
     tm = localtime(&ltime);
@@ -168,20 +179,19 @@ void add_time_stamp()
     wday_name[tm->tm_wday],  mon_name[tm->tm_mon],
     tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec,
     1900 + tm->tm_year);
-    
-    printf("%s : ",buf);
 }
 
-/***************************
- * initialise the variables 
- ***************************/
+/************************************************
+ * @brief  initialise the variables 
+ * @param scd : pointer to SCD30 parameters
+ ************************************************/
 void init_variables(struct scd_par *scd)
 {
     /* option SCD30 parameters */
     scd->asc = true;                // set Automatic Self Calibration (ASC)
     scd->stop_cm = false;           // NOT stop continuous measurement
     scd->perform_single = false;    // NOT perform a single measurement
-    scd->interval = 2;              // sample interval. 2 <> 1800 seconds
+    scd->interval = 2;               // sample interval. 2 <> 1800 seconds
     scd->frc = -1;                  // SCD30 forced recalibration  400 <>2000 ppm
     scd->temp_offset = -1;          // Temperature offset. 0 <> 25C
     scd->altitude = -1;             // altitude in meters -1520 <> 3040 meter
@@ -191,6 +201,7 @@ void init_variables(struct scd_par *scd)
     scd->loop_count = 10;           // number of measurement
     scd->loop_delay = 5;            // loop delay in between measurements
     scd->timestamp = false;        // NOT include timestamp in output
+    scd->tempCel = true;            // display temperarure in Celsius
     scd->verbose = 0;               // No verbose level
 
 #ifdef DYLOS                        // DYLOS monitor option
@@ -201,9 +212,10 @@ void init_variables(struct scd_par *scd)
 #endif
 }
 
-/**************************************************
- * initialise the Raspberry PI and SCD30 hardware 
- **************************************************/
+/**********************************************************
+ * @brief initialise the Raspberry PI and SCD30 / Dylos hardware 
+ * @param scd : pointer to SCD30 parameters
+ *********************************************************/
 void init_hw(struct scd_par *scd)
 {
 
@@ -224,7 +236,7 @@ void init_hw(struct scd_par *scd)
     MySensor.setDebug(scd->verbose);
     
     /* start hardware and SCD30 */
-    if (MySensor.begin(scd->asc,scd->interval) == false)
+    if (MySensor.begin(scd->asc, scd->interval) == false)
     {
         p_printf(RED,(char *) "Error during init I2C\n");
         exit(-1);
@@ -241,7 +253,12 @@ void init_hw(struct scd_par *scd)
     if (scd->pressure != -1)
     {
         if (scd->verbose) printf("setting pressure to %d\n", scd->pressure);
-        if(MySensor.setAmbientPressure(scd->pressure) == false) closeout();
+        
+        if(MySensor.setAmbientPressure(scd->pressure) == false)
+        {
+            p_printf (RED, (char *) "Error during setting pressure\n");
+            closeout();
+        }
     }
     
     /* will overrule ASC */
@@ -281,15 +298,18 @@ void init_hw(struct scd_par *scd)
 
 #ifdef DYLOS        // DYLOS monitor option
 
-/*************************************
- * Try to read from Dylos DC1700 monitor
+/*****************************************************************
+ * @brief Try to read from Dylos DC1700 monitor
  * 
- * @param mm : measurement structure
- ***********************************/
-void do_dylos(struct scd_par *scd)
+ * @param scd : pointer to SCD30 parameters and Dylos values
+ ****************************************************************/
+bool do_dylos(struct scd_par *scd)
 {
     char    buf[MAXBUF], t_buf[MAXBUF];
     int     ret, i, offset =0 ;
+    
+    /* if no Dylos device specified */
+    if ( ! scd->dylos.include) return(false);
     
     if(scd->verbose > 0 ) printf("\nReading Dylos data ");
     
@@ -330,25 +350,56 @@ void do_dylos(struct scd_par *scd)
         }
     }
     
-    /* display data */
-    printf("  DYLOS: PM1 %d\tPM10 %d\n",scd->dylos.value_pm1, scd->dylos.value_pm10 );
+    return(true);
 }
 
 #endif
 
+
 /*****************************************************************
- * Here the hart of the program happens
- * @param scd : structure with variables
+ * @brief output the results
+ * 
+ * @param scd : pointer to SCD30 parameters
+ ****************************************************************/
+void do_output(struct scd_par *scd)
+{
+    char buf[30];
+    
+    if (scd->timestamp) 
+    {
+        get_time_stamp(buf);
+        printf("%s: ",buf);
+    }
+    
+    printf("CO2: %4d PPM\t", (uint16_t) MySensor.getCO2());
+    printf("Humdity: %3.2f %%RH  ", MySensor.getHumidity());
+    
+    if (scd->tempCel)
+        printf("Temperature: %3.2f *C  ", MySensor.getTemperature());
+    else
+        printf("Temperature: %3.2f *F  ", MySensor.getTemperatureF());
+        
+#ifdef DYLOS
+
+    if (do_dylos(scd))
+       printf("  DYLOS: PM1 %4d PPM  PM10 %4d PPM",scd->dylos.value_pm1, scd->dylos.value_pm10 );
+
+#endif
+    printf("\n");
+       
+    /* display debug information on highest verbose level */
+    if(scd->verbose == 2) MySensor.DispClockStretch();
+}
+
+/*****************************************************************
+ * @brief Here the main of the program 
+ * @param scd : pointer to SCD30 parameters
  ****************************************************************/
 void main_loop(struct scd_par *scd)
 {
-    char buf[10];
-    int loop_set;
-    int retry = scd->loop_delay;
-    
-    /*  check for endless loop */
-    if (scd->loop_count > 0 ) loop_set =scd->loop_count;
-    else loop_set = 1;
+    char    buf[10];
+    int     loop_set, reset_retry = RESET_RETRY;
+    bool    first=true;
    
     /* get the serial number (check that communication works) */
     if(MySensor.getSerialNumber(buf) == false)
@@ -362,58 +413,52 @@ void main_loop(struct scd_par *scd)
     /* single measurement requested */
     if (scd->perform_single == true)
     {
+        p_printf(GREEN,(char *) "Starting single SCD30 measurement:\n");
+        
         if (MySensor.StartSingleMeasurement() == false)
         {
             p_printf (RED, (char *) "Can not perform single measurement\n");
             closeout();
         }
         
-        /* wait for data available from SCD30 */
-        while (MySensor.dataAvailable() == false)
-                if (retry-- > 0) continue;
-        
-        if (MySensor.dataAvailable() == true)
-        {
-            if (scd->timestamp) add_time_stamp();
-
-            printf("single SCD30 measurement:\nCO2 %d\t", MySensor.getCO2());
-            printf("Humdity %3.2f\t", MySensor.getHumidity());
-            printf("Temperature %3.2fC", MySensor.getTemperature());
-#ifdef DYLOS
-            do_dylos(scd);
-#else
-            printf("\n");
-#endif
-        }
-        else
-            p_printf(RED, (char *) "can not obtain single measurement data\n");
-        
-        /* display debug information on highest verbose level */
-        if(scd->verbose == 2) MySensor.DispClockStretch();
+        do_output(scd);
             
         return;
     }
     
-    /* loop requested, as long as not finalised */
+    p_printf(GREEN,(char *)  "Starting SCD30 measurement:\n");
+            
+    /*  check for endless loop */
+    if (scd->loop_count > 0 ) loop_set = scd->loop_count;
+    else loop_set = 1;
+    
+    /* loop requested */
     while (loop_set > 0)
     {
         if(MySensor.dataAvailable() == true)
         {
-            if (scd->timestamp) add_time_stamp();
-            printf("SCD30: CO2 %d\t", (uint16_t) MySensor.getCO2());
-            printf("Humdity %3.2f\t", MySensor.getHumidity());
-            printf("Temperature %3.2fC", MySensor.getTemperature());
-#ifdef DYLOS
-            do_dylos(scd);
-#else
-            printf("\n");
-#endif
+            reset_retry = RESET_RETRY;
+            do_output(scd);
         }
         else
-            printf("no data available\n");
-
-        /* display debug information on highest verbose level */
-        if(scd->verbose == 2) MySensor.DispClockStretch();
+        {
+            if (reset_retry-- == 0)
+            {
+                p_printf (RED, (char *) "Retry count exceeded. perform softreset\n");
+                MySensor.SoftReset();
+                reset_retry = RESET_RETRY;
+                first = true;
+            }
+            else
+            {
+                /* Prevent message when previous mode of the SCD30 was 
+                 * STOP continuous measurement. It needs 4 seconds 
+                 * at least for the first results in that case */
+                 
+                if (first)  first = false;
+                else printf("no data available\n");
+            }
+        }
         
         /* delay for seconds */
         sleep(scd->loop_delay);
@@ -424,7 +469,8 @@ void main_loop(struct scd_par *scd)
 }       
 
 /*********************************************************************
-*  usage information  
+* @brief usage information  
+* @param scd : pointer to SCD30 parameters
 **********************************************************************/
 
 void usage(struct scd_par *scd)
@@ -432,26 +478,29 @@ void usage(struct scd_par *scd)
     printf(    "%s [options]  (version %d) \n\n"
     
     "SCD30 settings: \n"
-    "-a         set Automatic Self Calibration (ASC)  (default is SET)\n"
+    "-a         set Automatic Self Calibration (ASC)    (default)\n"
     "-n         set NO ASC\n"
-    "-i #       measurement interval period SCD30      (default %d)\n"
-    "-f #       set forced recalibration value         (No default)\n"
-    "-m #       set current altitude in meters         (No default)\n"
-    "-o #       set temperature offset                 (No default)\n"
-    "-p #       set ambient pressure mbar              (No default)\n"
+    "-i #       measurement interval period SCD30       (default %d)\n"
+    "-f #       set forced recalibration value          (No default)\n"
+    "-m #       set current altitude in meters          (No default)\n"
+    "-o #       set temperature offset in *C            (No default)\n"
+    "-p #       set ambient pressure mbar               (No default)\n"
 
-    "-k         stop continuous measurement            (No default)\n"
-    "-c         set for continuous measurement         (default is set)\n"
-    "-S         perform single measurement             (No default)\n"
+    "-k         stop continuous measurement             (No default)\n"
+    "-c         set for continuous measurement          (default)\n"
+    "-S         perform single measurement              (No default)\n"
     
     "\nprogram settings\n"
-    "-l #       number of measurements (0 = constant)   (default %d)\n"
+    "-B         Do not display output in color\n"
+    "-l #       number of measurements (0 = endless)    (default %d)\n"
     "-w #       waittime (seconds) between measurements (default %d)\n"
     "-v #       verbose/ debug level (0 - 2)            (default %d)\n"
     "-t         add timestamp to output                 (default no stamp)\n"
+    "-F         show temperature in Fahrenheit\n"
+    
 #ifdef DYLOS 
     "\nDylos DC1700: \n"
-    "-D port    Enable Dylos input from port\n"
+    "-D port    Enable Dylos input from port            (No default)\n"
 #endif    
     "\nI2C settings: \n"
     "-H         use hardware I2C                        (default:soft_I2C)\n"
@@ -466,6 +515,8 @@ void usage(struct scd_par *scd)
 
 /*********************************************************************
  * Parse parameter input 
+ * @param scd : pointer to SCD30 parameters
+ 
  *********************************************************************/ 
 
 void parse_cmdline(int opt, char *option, struct scd_par *scd)
@@ -475,13 +526,13 @@ void parse_cmdline(int opt, char *option, struct scd_par *scd)
     case 'a':   // set Automatic Self Calibration (ASC)
         scd->asc = true;
         break;
-    
+
     case 'n':   // set NO Automatic Self Calibration (ASC)
         scd->asc = false;
         break;
         
     case 'm':   // altitude in meters
-      scd->altitude = (int16_t) strtod(option, NULL);
+        scd->altitude = (int16_t) strtod(option, NULL);
       
         // 700 mbar ~ 3040M altitude, 1200mbar ~ -1520
         if (scd->altitude < -1520 || scd->altitude > 3040)
@@ -559,8 +610,13 @@ void parse_cmdline(int opt, char *option, struct scd_par *scd)
     case 'k':   // stop continuous measurement
         scd->interval = 0;       // set for NO interval to stop in MySensor.begin()
         break;   
-    
-    case 'l':   //loop count
+
+ 
+    case 'B':   // set for no color output
+        NoColor = true;
+        break; 
+              
+    case 'l':   // loop count
         scd->loop_count = (uint16_t) strtod(option, NULL);
         break;
           
@@ -568,10 +624,14 @@ void parse_cmdline(int opt, char *option, struct scd_par *scd)
         scd->loop_delay = (uint16_t) strtod(option, NULL);
         break;
     
-    case 't': // Add timestamp to output
+    case 't':  // Add timestamp to output
         scd->timestamp = true;
         break;
-        
+
+    case 'F':  // show temperature in Fahrenheit
+        scd->tempCel = false;
+        break;
+                
     case 'v':   // set verbose / debug level
         scd->verbose = (int) strtod(option, NULL);
 
@@ -584,53 +644,53 @@ void parse_cmdline(int opt, char *option, struct scd_par *scd)
         break;
               
     case 'H':   // i2C interface 
-      MySensor.settings.I2C_interface = hard_I2C; 
-      break;
+        MySensor.settings.I2C_interface = hard_I2C; 
+        break;
  
     case 'P':   // enable internal BCM2835 pullup resistor 
-      MySensor.settings.pullup = true; 
-      break;       
+        MySensor.settings.pullup = true; 
+        break;       
     
     case 'q':   // i2C Speed
-      MySensor.settings.baudrate = (uint32_t) strtod(option, NULL);
-     
-      if (MySensor.settings.baudrate  < 1 || MySensor.settings.baudrate  > 400)
-      {
-          p_printf(RED,(char *) "Invalid i2C speed option %dKhz\n",MySensor.settings.baudrate );
-          exit(EXIT_FAILURE);
-      }
-      break; 
+        MySensor.settings.baudrate = (uint32_t) strtod(option, NULL);
+         
+        if (MySensor.settings.baudrate  < 1 || MySensor.settings.baudrate  > 400)
+        {
+            p_printf(RED,(char *) "Invalid i2C speed option %dKhz\n",MySensor.settings.baudrate );
+            exit(EXIT_FAILURE);
+        }
+        break; 
       
     case 'd':   // change default SCL line for soft_I2C
-      MySensor.settings.scl = (int)strtod(option, NULL);
+        MySensor.settings.scl = (int)strtod(option, NULL);
       
-      if (MySensor.settings.scl < 2 || MySensor.settings.scl == 4 || 
-      MySensor.settings.scl > 27 || MySensor.settings.sda == MySensor.settings.scl)
-      {
-          p_printf(RED,(char *) "invalid GPIO for SCL :  %d\n",MySensor.settings.scl);
-          exit(EXIT_FAILURE);
-      }   
-      break; 
+        if (MySensor.settings.scl < 2 || MySensor.settings.scl == 4 || 
+        MySensor.settings.scl > 27 || MySensor.settings.sda == MySensor.settings.scl)
+        {
+            p_printf(RED,(char *) "invalid GPIO for SCL :  %d\n",MySensor.settings.scl);
+            exit(EXIT_FAILURE);
+        }   
+        break; 
 
     case 's':   // change default SDA line for soft_I2C
-      MySensor.settings.sda = (int)strtod(option, NULL);
+        MySensor.settings.sda = (int)strtod(option, NULL);
       
-      if (MySensor.settings.sda < 2 || MySensor.settings.sda == 4 || 
-      MySensor.settings.sda > 27 || MySensor.settings.sda == MySensor.settings.scl)
-      {
-          p_printf(RED,(char *) "Invalid GPIO for SDA :  %d\n", MySensor.settings.sda);
-          exit(EXIT_FAILURE);
-      }   
-      break;       
+        if (MySensor.settings.sda < 2 || MySensor.settings.sda == 4 || 
+        MySensor.settings.sda > 27 || MySensor.settings.sda == MySensor.settings.scl)
+        {
+            p_printf(RED,(char *) "Invalid GPIO for SDA :  %d\n", MySensor.settings.sda);
+            exit(EXIT_FAILURE);
+        }   
+        break;       
 
     case 'D':   // include Dylos read
 #ifdef DYLOS
-      strncpy(scd->dylos.port, option, MAXBUF);
-      scd->dylos.include = true;
+        strncpy(scd->dylos.port, option, MAXBUF);
+        scd->dylos.include = true;
 #else
-      p_printf(RED, (char *) "Dylos is not supported in this build\n");
+        p_printf(RED, (char *) "Dylos is not supported in this build\n");
 #endif
-      break;
+        break;
     case 'h':   // help  (No break)
     
     default: /* '?' */
@@ -657,8 +717,8 @@ int main(int argc, char *argv[])
     /* set the initial values */
     init_variables(&scd);
 
-     /* parse commandline */
-    while ((opt = getopt(argc, argv, "ani:f:m:o:p:kcSl:v:w:tHs:d:q:PD:")) != -1)
+    /* parse commandline */
+    while ((opt = getopt(argc, argv, "ani:f:m:o:p:kcSBl:v:w:tHs:d:q:PD:hF")) != -1)
     {
         parse_cmdline(opt, optarg, &scd);
     }
