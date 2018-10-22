@@ -17,6 +17,9 @@
  * - changed single measurement method
  * - added option to output temperature in Fahrenheit instead of celsius
  * 
+ * Version 3.0 : October 2018
+ * - added dewpoint and heatindex
+ * 
  * Resources / dependencies:
  * BCM2835 library (http://www.airspayce.com/mikem/bcm2835/)
  * twowire library (https://github.com/paulvha/twowire)
@@ -88,6 +91,8 @@ typedef struct scd_par
     uint16_t loop_delay;        // loop delay in between measurements
     bool timestamp;             // include timestamp in output
     bool tempCel;               // show temperature in Celsius or Fahrenheit
+    bool heatindex;             // add heatindex in output
+    bool dewpoint;              // add dewpoint in output
     int verbose;                // verbose level
     
 #ifdef DYLOS                    // DYLOS monitor option
@@ -201,6 +206,8 @@ void init_variables(struct scd_par *scd)
     scd->loop_count = 10;           // number of measurement
     scd->loop_delay = 5;            // loop delay in between measurements
     scd->timestamp = false;        // NOT include timestamp in output
+    scd->dewpoint = false;         // NOT include dewpoint in output
+    scd->heatindex = false;        // NOT include heatindex in output
     scd->tempCel = true;            // display temperarure in Celsius
     scd->verbose = 0;               // No verbose level
 
@@ -363,7 +370,9 @@ bool do_dylos(struct scd_par *scd)
  ****************************************************************/
 void do_output(struct scd_par *scd)
 {
-    char buf[30];
+    char buf[30],t;
+    float index, dew, temp, hum;
+    uint16_t co2;
     
     if (scd->timestamp) 
     {
@@ -371,14 +380,29 @@ void do_output(struct scd_par *scd)
         printf("%s: ",buf);
     }
     
-    printf("CO2: %4d PPM\t", (uint16_t) MySensor.getCO2());
-    printf("Humdity: %3.2f %%RH  ", MySensor.getHumidity());
+    co2 = (uint16_t) MySensor.getCO2();
+    hum = MySensor.getHumidity();
     
-    if (scd->tempCel)
-        printf("Temperature: %3.2f *C  ", MySensor.getTemperature());
-    else
-        printf("Temperature: %3.2f *F  ", MySensor.getTemperatureF());
-        
+    if (scd->tempCel)   // Celsius
+    {
+        temp = MySensor.getTemperature();
+        index = MySensor.computeHeatIndex(temp, hum, false);
+        dew = MySensor.calc_dewpoint(temp, hum, false);
+        t= 'C';
+   }
+    else     // Fahrenheit
+    {
+        temp = MySensor.getTemperatureF();
+        index = MySensor.computeHeatIndex(temp, hum, true);
+        dew = MySensor.calc_dewpoint(temp, hum, true);
+        t= 'F';
+    }
+    
+     printf("CO2: %4d PPM\tHumdity: %3.2f %%RH  Temperature: %3.2f *%c  ",co2, hum,temp,t);
+     
+     if (scd->heatindex) printf("heatindex: %3.2f *%c ", index, t);
+     if (scd->dewpoint)  printf("dew-point: %3.2f *%c ", dew, t);
+     
 #ifdef DYLOS
 
     if (do_dylos(scd))
@@ -496,6 +520,8 @@ void usage(struct scd_par *scd)
     "-w #       waittime (seconds) between measurements (default %d)\n"
     "-v #       verbose/ debug level (0 - 2)            (default %d)\n"
     "-t         add timestamp to output                 (default no stamp)\n"
+    "-u         add dew-point to output\n"
+    "-x         add heat-index to output\n"
     "-F         show temperature in Fahrenheit\n"
     
 #ifdef DYLOS 
@@ -642,7 +668,16 @@ void parse_cmdline(int opt, char *option, struct scd_par *scd)
             exit(EXIT_FAILURE);
         }
         break;
-              
+
+    case 'u':   // add heatindex to output
+        scd->heatindex = true;
+        break;
+        
+    
+    case 'x':   // add dewpoint to output
+        scd->dewpoint = true;
+        break; 
+                         
     case 'H':   // i2C interface 
         MySensor.settings.I2C_interface = hard_I2C; 
         break;
@@ -718,7 +753,7 @@ int main(int argc, char *argv[])
     init_variables(&scd);
 
     /* parse commandline */
-    while ((opt = getopt(argc, argv, "ani:f:m:o:p:kcSBl:v:w:tHs:d:q:PD:hF")) != -1)
+    while ((opt = getopt(argc, argv, "ani:f:m:o:p:kcSBl:v:w:tHs:d:q:PD:hFxu")) != -1)
     {
         parse_cmdline(opt, optarg, &scd);
     }

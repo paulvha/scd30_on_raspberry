@@ -28,6 +28,10 @@ adjusted and extended for stable working.
  * - added option to output temperature in Fahrenheit instead of celsius
  * - extended documentation
 
+# version 3.0 / october 2018
+ * by Paul van Haastrecht (paulvha@hotmail.com)
+* - added dew-point and heat-index calculation
+
 ## Software installation
 
 Make your self superuser : sudo bash

@@ -15,10 +15,13 @@
  * October 2018 : Changed, enhanced and extended for raspberry Pi
  * by Paul van Haastrecht (paulvha@hotmail.com)
  * 
- * version 1.0 initial Raspberry Pi
+ * version 1.0 : initial Raspberry Pi
  * 
  * version 2.0 : October 2018  
  * - added softreset
+ * 
+ * Version 3.0 : October 2018
+ * - added dewpoint and heatindex
  * 
  * Resources / dependencies:
  * BCM2835 library (http://www.airspayce.com/mikem/bcm2835/)
@@ -53,10 +56,11 @@
 # include <string.h>
 # include <unistd.h>
 # include <time.h>
+# include <math.h>
 
 
 /* set version number */
-# define version 2
+# define version 3
 
 /* The default I2C address for the SCD30 is 0x61 */
 #define SCD30_ADDRESS 0x61
@@ -242,6 +246,11 @@ class SCD30
          * @return  true = OK, false is error.
          */
         bool setTemperatureOffset(float tempOffset);
+
+        /*! calculation */
+        float calc_dewpoint(float in_temperature, float hum, bool isFahrenheit);
+        float computeHeatIndex(float in_temperature, float percentHumidity, bool isFahrenheit);
+
 
         /*! close driver and release memory */
         void close(void);
