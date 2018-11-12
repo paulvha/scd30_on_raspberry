@@ -5,16 +5,16 @@ Based on the parts are based on SparkFun SCD30 CO2 Sensor Library ( https://gith
 
 
 ## Background
-As part of a larger project I am looking at analyzing and understanding the air quality. 
-The aim of this project was to better understand the kind of gas-types that are in the air. 
+As part of a larger project I am looking at analyzing and understanding the air quality.
+The aim of this project was to better understand the kind of gas-types that are in the air.
 
-I have ported the library to CPP on a Raspberry PI running Raspbian Jessie release. It has been 
+I have ported the library to CPP on a Raspberry PI running Raspbian Jessie release. It has been
 adjusted and extended for stable working.
 
-# version 1.0	/  October 2018
+# version 1.0   /  October 2018
  * Initial version Changed, enhanced and extended for raspberry Pi
  * by Paul van Haastrecht (paulvha@hotmail.com)
- * 
+ *
  * Resources / dependencies:
  * BCM2835 library (http://www.airspayce.com/mikem/bcm2835/)
  * twowire library (https://github.com/paulvha/twowire)
@@ -32,6 +32,9 @@ adjusted and extended for stable working.
  * by Paul van Haastrecht (paulvha@hotmail.com)
 * - added dew-point and heat-index calculation
 
+# Version 3.0.1 / November 2018
+ * - fixed Humdity typo in printf
+
 ## Software installation
 
 Make your self superuser : sudo bash
@@ -40,13 +43,13 @@ Make your self superuser : sudo bash
 Install latest from BCM2835 from : http://www.airspayce.com/mikem/bcm2835/
 
 1. wget http://www.airspayce.com/mikem/bcm2835/bcm2835-1.56.tar.gz
-2. tar -zxf bcm2835-1.56.tar.gz		// 1.56 was version number at the time of writing
+2. tar -zxf bcm2835-1.56.tar.gz     // 1.56 was version number at the time of writing
 3. cd bcm2835-1.56
 4. ./configure
 5. sudo make check
 6. sudo make install
 
-In order for this software to run you should NOT enable i2C in raspi-config to load the kernel drivers. 
+In order for this software to run you should NOT enable i2C in raspi-config to load the kernel drivers.
 It works directly on the hardware, but you’ll have to run program as root.
 
 3.2 twowire library
