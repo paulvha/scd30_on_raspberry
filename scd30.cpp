@@ -401,7 +401,7 @@ void do_output(struct scd_par *scd)
         t= 'F';
     }
 
-     printf("CO2: %4d PPM\tHumidity: %3.2f %%RH  Temperature: %3.2f *%c  ",co2, hum,temp,t);
+     p_printf(WHITE, (char *) "CO2: %4d PPM\tHumidity: %3.2f %%RH  Temperature: %3.2f *%c  ",co2, hum,temp,t);
 
      if (scd->heatindex) printf("heatindex: %3.2f *%c ", index, t);
      if (scd->dewpoint)  printf("dew-point: %3.2f *%c ", dew, t);
