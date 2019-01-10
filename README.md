@@ -36,7 +36,8 @@ adjusted and extended for stable working.
  * - fixed Humdity typo in printf
 
 # Version 3.0.2 / January 2019
- * - fixed issue to integrate with Python and added Pytho integrationexample code in the .odt (credit Aeolus1364)
+ * - fixed issue to integrate with Python
+ * - Added Python integration example code in the .odt (credit Aeolus1364)
 
 ## Software installation
 
