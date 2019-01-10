@@ -20,8 +20,15 @@
  * version 2.0 : October 2018  
  * - added softreset
  * 
- * Version 3.0 : October 2018
+ * version 3.0 : October 2018
  * - added dewpoint and heatindex
+ * 
+ * Version 3.0.1 : November 2018
+ * - fixed humidity type in printf
+ * 
+ * version 3.0.2: January 2019
+ * - changed to use p_printf in do_output to fix an issue with providing
+ *   output as a sub-program to python.
  * 
  * Resources / dependencies:
  * BCM2835 library (http://www.airspayce.com/mikem/bcm2835/)
@@ -214,7 +221,7 @@ class SCD30
         bool setAmbientPressure(uint16_t pressure_mbar);
         
         
-        /*! set altitude  compensation for SCD30
+        /*! set altitude compensation for SCD30
          *  between -1520 and 3040 meter
          * 
          *  either set pressure or altitude.
@@ -223,7 +230,7 @@ class SCD30
          */
         bool setAltitudeCompensation(uint16_t altitude);
         
-        /*! enable of disable  Auto Self Calibration (ASC) for SCD30
+        /*! enable of disable Auto Self Calibration (ASC) for SCD30
          * 
          *  will overwrite forced calibration
          *  
@@ -231,7 +238,7 @@ class SCD30
          */
         bool setAutoSelfCalibration(bool enable);
         
-        /*! set forece calibration for SCD30
+        /*! set forced calibration for SCD30
          *  between 400 and 2000 PPM
          * 
          *  will overwrite ASC

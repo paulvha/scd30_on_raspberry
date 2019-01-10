@@ -35,6 +35,9 @@ adjusted and extended for stable working.
 # Version 3.0.1 / November 2018
  * - fixed Humdity typo in printf
 
+# Version 3.0.2 / January 2019
+ * - fixed issue to integrate with Python and added Pytho integrationexample code in the .odt (credit Aeolus1364)
+
 ## Software installation
 
 Make your self superuser : sudo bash

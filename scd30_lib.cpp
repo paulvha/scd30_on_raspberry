@@ -26,7 +26,10 @@
  * 
  * Version 3.0 : October 2018
  * - added dewpoint and heatindex
- *  
+ *
+ * Version 3.0.1 : November 2018
+ * - change remark about pull-up resistors on the SCD30
+ * 
  * Resources / dependencies:
  * BCM2835 library (http://www.airspayce.com/mikem/bcm2835/)
  * twowire library (https://github.com/paulvha/twowire)
@@ -105,7 +108,7 @@ bool SCD30::begin(bool asc, uint16_t interval) {
      * GPIO. BUT not on GPIO-2 and GPIO-3. The Raspberry has already 
      * external 1k8 pullup resistors on GPIO 2 and 3
      * 
-     * The SCD30 does not have them (checked with scope)
+     * The SCD30 has 50K pull-up enabled in the processor on the board
      *
      * While this works, it is better to have external resistors (10K)
      * for signal quality. Hence pull-up is disabled by default.
@@ -212,15 +215,15 @@ float SCD30::computeHeatIndex(float in_temperature, float percentHumidity, bool 
   return isFahrenheit ? hi :  (hi - 32) * 0.55555;
 }
 
-/*!
-    @brief calculate dew point
-    @param temp : current temperature
-    @param hum : current humidity
-    @param Fahrenheit (true) or celsius (false)
-    
-    using the Augst-Roche-Magnus Approximation.
-    
-    @return dewpoint
+/*********************************************************************
+ * @brief calculate dew point
+ * @param temp : current temperature
+ * @param hum : current humidity
+ * @param Fahrenheit (true) or celsius (false)
+ *   
+ * using the Augst-Roche-Magnus Approximation.
+ *   
+ *   @return dewpoint
  *********************************************************************/   
 float SCD30::calc_dewpoint(float in_temperature, float hum, bool isFahrenheit) {
     
@@ -239,7 +242,7 @@ float SCD30::calc_dewpoint(float in_temperature, float hum, bool isFahrenheit) {
 }
 
 
-/************************************************************
+/****************************************************************
  * @brief Returns the latest available CO2 level.
  * 
  * If the current level has already been reported, trigger a new read 
@@ -360,7 +363,7 @@ bool SCD30::getSerialNumber(char *val) {
      return(true);
 }
 
-/*************************************************************
+/****************************************************************
  * @brief enables or disables the ASC See 1.3.6
  *
  * ASC status is saved in non-volatile memory. When the sensor is 
@@ -386,7 +389,7 @@ bool SCD30::setAutoSelfCalibration(bool enable) {
     }
 }
 
-/*********************************************************
+/****************************************************************
  * @brief Set the temperature offset. See 1.3.8.
  *
  * Temperature offset value is saved in non-volatile memory.
@@ -415,7 +418,7 @@ bool SCD30::setTemperatureOffset(float tempOffset) {
   return (sendCommand(COMMAND_SET_TEMPERATURE_OFFSET, tickOffset));
 }
 
-/************************************************************
+/******************************************************************
  * @brief Set the altitude compenstation. See 1.3.9.
  *
  * Setting altitude is disregarded when an ambient pressure is 
@@ -755,12 +758,12 @@ bool SCD30::checkCrc(uint8_t *data, uint8_t len, uint8_t crc_rec) {
  ****************************************************************/
 bool SCD30::readMeasurement(){
     
-  uint8_t data[2];
-  uint8_t buff[20];
-  uint8_t y, x;
-  uint32_t tempCO2 = 0;
-  uint32_t tempHumidity = 0;
-  uint32_t tempTemperature = 0;
+    uint8_t data[2];
+    uint8_t buff[20];
+    uint8_t y, x;
+    uint32_t tempCO2 = 0;
+    uint32_t tempHumidity = 0;
+    uint32_t tempTemperature = 0;
 
     /* Verify we have data from the sensor */
     if (dataAvailable() == false)   return (false);
@@ -773,7 +776,6 @@ bool SCD30::readMeasurement(){
     /* Parse buffer */
     for (x = 0, y =0  ; x < 18 ; x++)
     {
-
       switch (x)
       {
         case 0:     // MSB CO2
@@ -829,17 +831,17 @@ bool SCD30::readMeasurement(){
       }
     }
   
-  /* Now copy the uint32s into their associated floats */
-  memcpy(&_co2, &tempCO2, sizeof(_co2));
-  memcpy(&_temperature, &tempTemperature, sizeof(_temperature));
-  memcpy(&_humidity, &tempHumidity, sizeof(_humidity));
-
-  /* Mark our global variables as fresh */
-  co2HasBeenReported = false;
-  humidityHasBeenReported = false;
-  temperatureHasBeenReported = false;
-
-  return (true); //Success! New data available in globals.
+    /* Now copy the uint32s into their associated floats */
+    memcpy(&_co2, &tempCO2, sizeof(_co2));
+    memcpy(&_temperature, &tempTemperature, sizeof(_temperature));
+    memcpy(&_humidity, &tempHumidity, sizeof(_humidity));
+    
+    /* Mark our global variables as fresh */
+    co2HasBeenReported = false;
+    humidityHasBeenReported = false;
+    temperatureHasBeenReported = false;
+    
+    return (true); //Success! New data available in globals.
 }
 
 /************************************************************
