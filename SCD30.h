@@ -30,6 +30,11 @@
  * - changed to use p_printf in do_output to fix an issue with providing
  *   output as a sub-program to python.
  * 
+ * Version 3.1.0 : August 2020
+ *   Changes based on Datasheet May 2020
+ * - added functions : getForceRecalibration, getMeasurementInterval, 
+ *   getTemperatureOffset, getAltitudeCompensation, getFirmwareLevel
+ * 
  * Resources / dependencies:
  * BCM2835 library (http://www.airspayce.com/mikem/bcm2835/)
  * twowire library (https://github.com/paulvha/twowire)
@@ -67,7 +72,8 @@
 
 
 /* set version number */
-# define version 3
+# define VERSIONMAJOR 3
+# define VERSIONMINOR 1
 
 /* The default I2C address for the SCD30 is 0x61 */
 #define SCD30_ADDRESS 0x61
@@ -93,9 +99,11 @@
 #define COMMAND_SET_ALTITUDE_COMPENSATION   0x5102
 #define CMD_READ_SERIALNBR                  0xD033
 //#define CMD_READ_ARTICLECODE              0XD025  // ONLY ZERO'S
-#define CMD_START_SINGLE_MEAS               0x0006  // NOT used due to issues
+//#define CMD_START_SINGLE_MEAS             0x0006  // NOT used due to issues
 #define CMD_STOP_MEAS                       0x0104
 #define CMD_SOFT_RESET                      0xD304
+#define CMD_GET_FW_LEVEL                    0xD100  // added August 2020
+#define SCD30_SERIAL_NUM_WORDS              16      // added August 2020
 
 struct scd30_p
 {
@@ -202,14 +210,21 @@ class SCD30
          */        
         float getTemperatureF(void);
 
+        /*!read 16 bit value from a register
+         * @param command :  command to sent
+         * @param val : return the read 16 bit value
+         * 
+         * @return  true = OK, false is error.
+         */
+        bool getSettingValue(uint16_t command, uint16_t *val);
+        
         /*! set interval for continuous measurement
          *  between 2 and 1800 seconds
          * 
-         *  @return : 32 in case of error
+         *  @return  true = OK, false is error.
          * 
          */
         bool setMeasurementInterval(uint16_t interval);
-        
         
         /*! set pressure compensation for SCD30
          *  between 700 and 1200 mbar
@@ -219,7 +234,6 @@ class SCD30
          *  @return  true = OK, false is error.
          */
         bool setAmbientPressure(uint16_t pressure_mbar);
-        
         
         /*! set altitude compensation for SCD30
          *  between -1520 and 3040 meter
@@ -280,6 +294,16 @@ class SCD30
          * @return  true = OK, false is error.
          */
         bool readMeasurement();
+        
+        /*! Read from SCD30 the amount of requested bytes
+         * @param val : to store the data received
+         * @param cnt : number of data bytes requested
+         *
+         * @return
+         * OK number of bytes read
+         * 0  error
+         */
+        uint8_t ReadFromSCD30(uint16_t command, uint8_t *val, uint8_t cnt);
         
         /*! initialize the SCD30 based on the ASC and interval values
          *  @return  true = OK, false is error.

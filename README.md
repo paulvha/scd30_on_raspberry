@@ -1,8 +1,7 @@
 paulvha SCD30 library for Raspberry Pi
 ===========================================================
 
-Based on the parts are based on SparkFun SCD30 CO2 Sensor Library ( https://github.com/sparkfun/SparkFun_SCD30_Arduino_Library)
-
+Based on the parts are based on SparkFun SCD30 CO2 Sensor Library (https://github.com/sparkfun/SparkFun_SCD30_Arduino_Library)
 
 ## Background
 As part of a larger project I am looking at analyzing and understanding the air quality.
@@ -30,7 +29,7 @@ adjusted and extended for stable working.
 
 # version 3.0 / october 2018
  * by Paul van Haastrecht (paulvha@hotmail.com)
-* - added dew-point and heat-index calculation
+ * - added dew-point and heat-index calculation
 
 # Version 3.0.1 / November 2018
  * - fixed Humdity typo in printf
@@ -38,6 +37,12 @@ adjusted and extended for stable working.
 # Version 3.0.2 / January 2019
  * - fixed issue to integrate with Python
  * - Added Python integration example code in the .odt (credit Aeolus1364)
+
+# Version 3.1 / August 2020
+ *   Changes based on Datasheet May 2020
+ * - added functions : getForceRecalibration, getMeasurementInterval,
+ *   getTemperatureOffset, getAltitudeCompensation, getFirmwareLevel
+ * - updates to streamline the library calls & typo's.
 
 ## Software installation
 
@@ -67,7 +72,7 @@ Obtain the latest version from : https://github.com/paulvha/twowire
 *1) if you do not have unzip : sudo apt-get install zip unzip
 
 3.3 scd30 software
-Obtain the latest version from : https://github.com/paulvha/scd30_on_raspberry
+Obtain the latest version from: https://github.com/paulvha/scd30_on_raspberry
 
 1. Download the zip-file (clone or download / download zip-file) in the wanted directory
 2. unzip scd30_on_raspberry-master.zip (*1)
@@ -75,9 +80,10 @@ Obtain the latest version from : https://github.com/paulvha/scd30_on_raspberry
 4. create the executable : make  \
 5. To run you have to be as sudo ./scd30 -h ….
 
-The “make” command will create an SCD30 monitor only. The command “make BUILD=DYLOS” will create an executable that is able to monitor both the SCD30 as well as the DYLOS 1700.
+The “make” command will create an SCD30 monitor only. The command “make BUILD=DYLOS” will
+create an executable that is able to monitor both the SCD30 as well as the DYLOS 1700.
 
-(detailed description of the many options in  scd30.odt)
+(detailed description of the many options in scd30.odt)
 
 
 ============= ORIGINAL INFORMATION FROM SPARKFUN ===========================

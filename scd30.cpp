@@ -27,6 +27,11 @@
  * - changed to use p_printf in do_output to fix an issue with providing
  *   output as a sub-program to python.
  * 
+ * Version 3.1.0 : August 2020
+ *   Changes based on Datasheet May 2020
+ * - added functions : getForceRecalibration, getMeasurementInterval, 
+ *   getTemperatureOffset, getAltitudeCompensation, getFirmwareLevel
+ * 
  * Resources / dependencies:
  * BCM2835 library (http://www.airspayce.com/mikem/bcm2835/)
  * twowire library (https://github.com/paulvha/twowire)
@@ -91,7 +96,13 @@ typedef struct scd_par
     int16_t temp_offset;       // Temperature offset. 0 <> 25C
     int16_t altitude;          // altitude in meters -1520 <> 3040 meter
     int16_t pressure;          // pressure in Mbar 700 <> 1200 mbar
-    bool    asc;                // true to perform Automatic Self calibration
+    bool    asc;               // true to perform Automatic Self calibration
+    // added 3.1 / August 2020
+    bool    g_measurement;      // get measurement interval
+    bool    g_FRC;              // get Forced recalibration factor
+    bool    g_temp_offset;      // get current temperature offset
+    bool    g_altitude;         // get altitude compensation
+    bool    d_deviceinfo;           // display firmware
     
     /* option program variables */
     uint16_t loop_count;        // number of measurement
@@ -209,6 +220,13 @@ void init_variables(struct scd_par *scd)
     scd->altitude = -1;             // altitude in meters -1520 <> 3040 meter
     scd->pressure = -1;             // pressure in Mbar 700 <> 1200 mbar
     
+    // added 3.1 / August 2020
+    scd->g_measurement = false;    // get measurement interval
+    scd->g_FRC = false;            // get Forced recalibration factor
+    scd->g_temp_offset = false;    // get current temperature offset
+    scd->g_altitude = false;       // get altitude compensation
+    scd->d_deviceinfo = false;         // display firmware
+    
     /* option program variables */
     scd->loop_count = 10;           // number of measurement
     scd->loop_delay = 5;            // loop delay in between measurements
@@ -225,6 +243,44 @@ void init_variables(struct scd_par *scd)
     scd->dylos.value_pm10 = 0;
 #endif
 }
+
+/**********************************************************
+ * @brief Display different correction settings
+ * @param scd : pointer to SCD30 parameters
+ *********************************************************/
+void get_value(struct scd_par *scd) 
+{
+    uint16_t val;
+    
+    if (scd->g_measurement) {
+        if (MySensor.getSettingValue(COMMAND_SET_MEASUREMENT_INTERVAL, &val))
+            p_printf(GREEN,(char *)"Measurement interval %d\n", val);
+        else
+            p_printf(RED,(char *)"Could not read Measurement interval\n");
+    }
+        
+    if (scd->g_FRC){
+        if (MySensor.getSettingValue(COMMAND_SET_FORCED_RECALIBRATION_FACTOR, &val))
+            p_printf(GREEN,(char *)"Forced calibration factor %d\n", val);
+        else
+            p_printf(RED,(char *)"Could not read forced calibration factor\n");
+    }
+    
+    if (scd->g_temp_offset){
+        if (MySensor.getSettingValue(COMMAND_SET_TEMPERATURE_OFFSET, &val))
+            p_printf(GREEN,(char *)"Temperature offset %d or %d *C\n", val, val / 100);
+        else
+            p_printf(RED,(char *)"Could not read temperature offset\n");
+    }
+    
+    if (scd->g_altitude){
+        if (MySensor.getSettingValue(COMMAND_SET_ALTITUDE_COMPENSATION, &val))
+            p_printf(GREEN,(char *)"Altitude compensation %d\n", val);
+        else
+            p_printf(RED,(char *)"Could not read altitude compensation \n");
+    }
+}
+
 
 /**********************************************************
  * @brief initialise the Raspberry PI and SCD30 / Dylos hardware 
@@ -248,9 +304,23 @@ void init_hw(struct scd_par *scd)
     
     /* progress & debug messages tell driver */
     MySensor.setDebug(scd->verbose);
-    
+
+     /* 3.1 only obtain the values */
+    if (scd->g_measurement || scd->g_FRC || scd->g_temp_offset || scd->g_altitude)
+    {
+         /* start hardware */
+        if (! MySensor.begin(0, 0))
+        {
+            p_printf(RED,(char *) "Error during init I2C\n");
+            exit(-1);
+        }
+     
+        get_value(scd);
+        closeout();
+    }
+
     /* start hardware and SCD30 */
-    if (MySensor.begin(scd->asc, scd->interval) == false)
+    if (! MySensor.begin(scd->asc, scd->interval))
     {
         p_printf(RED,(char *) "Error during init I2C\n");
         exit(-1);
@@ -428,18 +498,26 @@ void do_output(struct scd_par *scd)
  ****************************************************************/
 void main_loop(struct scd_par *scd)
 {
-    char    buf[10];
+    char    buf[(SCD30_SERIAL_NUM_WORDS * 2) + 1];  // 3.1
     int     loop_set, reset_retry = RESET_RETRY;
     bool    first=true;
-   
-    /* get the serial number (check that communication works) */
-    if(MySensor.getSerialNumber(buf) == false)
+    uint16_t val;
+       
+    // include device information
+    if (scd->d_deviceinfo)
     {
-       p_printf (RED, (char *) "Error during getting serial number\n");
-       closeout();
+        /* get the serial number (check that communication works) */
+        if(MySensor.getSerialNumber(buf) )
+            p_printf(YELLOW, (char *) "Serialnumber\t%s\n", buf);
+        else
+           p_printf (RED, (char *) "Error during getting serial number\n");
+        
+        /* 3.1 add firmware level */
+        if (MySensor.getSettingValue(CMD_GET_FW_LEVEL, &val))
+            p_printf(YELLOW,(char *)"Firmware level\t%d.%d\n", val>>8 & 0xff, val & 0xff);
+        else
+            p_printf(RED,(char *)"Could not read firmware level\n");
     }
-
-    p_printf(YELLOW, (char *) "Serialnumber  %s\n", buf);
     
     /* single measurement requested */
     if (scd->perform_single == true)
@@ -506,7 +584,7 @@ void main_loop(struct scd_par *scd)
 
 void usage(struct scd_par *scd)
 {
-    printf(    "%s [options]  (version %d) \n\n"
+    printf(    "%s [options]  (version %d.%d) \n\n"
     
     "SCD30 settings: \n"
     "-a         set Automatic Self Calibration (ASC)    (default)\n"
@@ -515,11 +593,14 @@ void usage(struct scd_par *scd)
     "-f #       set forced recalibration value          (No default)\n"
     "-m #       set current altitude in meters          (No default)\n"
     "-o #       set temperature offset in *C            (No default)\n"
-    "-p #       set ambient pressure mbar               (No default)\n"
+    "-p #       set ambient pressure mbar               (No default)\n\n"
 
     "-k         stop continuous measurement             (No default)\n"
     "-c         set for continuous measurement          (default)\n"
     "-S         perform single measurement              (No default)\n"
+    "-b         Only display measurement interval\n"
+    "-r         Only display forced recalibration factor\n"
+    "-e         Only display temperature offset\n"
     
     "\nprogram settings\n"
     "-B         Do not display output in color\n"
@@ -527,8 +608,9 @@ void usage(struct scd_par *scd)
     "-w #       waittime (seconds) between measurements (default %d)\n"
     "-v #       verbose/ debug level (0 - 2)            (default %d)\n"
     "-t         add timestamp to output                 (default no stamp)\n"
-    "-u         add dew-point to output\n"
-    "-x         add heat-index to output\n"
+    "-j         add device info to output\n"
+    "-x         add dew-point to output\n"
+    "-u         add heat-index to output\n"
     "-F         show temperature in Fahrenheit\n"
     
 #ifdef DYLOS 
@@ -542,7 +624,7 @@ void usage(struct scd_par *scd)
     "-d #       set SCL GPIO for soft_I2C               (default GPIO %d)\n"
     "-P         set internal pullup resistor on SDA/SCL (default not set)\n"
     
-   ,progname, version, scd->interval, scd->loop_count, scd->loop_delay, scd->verbose,
+   ,progname, VERSIONMAJOR, VERSIONMINOR, scd->interval, scd->loop_count, scd->loop_delay, scd->verbose,
    SCD30_SPEED, DEF_SDA, DEF_SCL);
 }
 
@@ -558,6 +640,26 @@ void parse_cmdline(int opt, char *option, struct scd_par *scd)
         
     case 'a':   // set Automatic Self Calibration (ASC)
         scd->asc = true;
+        break;
+
+    case 'b':   // get measurement interval
+        scd->g_measurement = true;
+        break;
+
+    case 'r':   // get forced recalibration factor
+        scd->g_FRC = true;
+        break;
+        
+    case 'e':   // get temperature offset
+        scd->g_temp_offset = true;
+        break;
+        
+    case 'g':   // get altitude compensation
+        scd->g_altitude = true;
+        break;
+        
+    case 'j':   // read firmware level
+        scd->d_deviceinfo = true;
         break;
 
     case 'n':   // set NO Automatic Self Calibration (ASC)
@@ -760,7 +862,7 @@ int main(int argc, char *argv[])
     init_variables(&scd);
 
     /* parse commandline */
-    while ((opt = getopt(argc, argv, "ani:f:m:o:p:kcSBl:v:w:tHs:d:q:PD:hFxu")) != -1)
+    while ((opt = getopt(argc, argv, "abregjni:f:m:o:p:kcSBl:v:w:tHs:d:q:PD:hFxu")) != -1)
     {
         parse_cmdline(opt, optarg, &scd);
     }

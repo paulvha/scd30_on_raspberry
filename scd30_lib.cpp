@@ -30,6 +30,12 @@
  * Version 3.0.1 : November 2018
  * - change remark about pull-up resistors on the SCD30
  * 
+ * Version 3.1.0 : August 2020
+ *   Changes based on Datasheet May 2020
+ * - added functions : getForceRecalibration, getMeasurementInterval, 
+ *   getTemperatureOffset, getAltitudeCompensation, getFirmwareLevel
+ * - updates to streamline the library calls & typo's.
+ * 
  * Resources / dependencies:
  * BCM2835 library (http://www.airspayce.com/mikem/bcm2835/)
  * twowire library (https://github.com/paulvha/twowire)
@@ -156,7 +162,7 @@ bool SCD30::begin_scd30()
         if(beginMeasuring() == true)     //Start continuous measurements
         {
             /* set interval for continuous measurement start it else stop */
-            if (setMeasurementInterval(_interval) == false) return(false); 
+            if (! setMeasurementInterval(_interval) ) return(false); 
         }
 
         /* enable or disable Automatic Self Calibration */
@@ -304,20 +310,9 @@ float SCD30::getTemperatureF(void) {
 /******************************************************************
  * @brief read serial number from SCD30
  *
- * format 9 digits
- *  digit 1
- *  digit 2
- *  crc
- *  digit 3
- *  digit 4
- *  crc
- *  digit 5
- *  digit 6
- *  crc
- *
  * @param val : store the serial number
- *         provided val buffer must be defined at least 7 digits
- *         6 serial + 0x0 termination
+ *         provided val buffer must be defined at least 33 digits
+ *         32 serial + 0x0 termination
  *
  * @return true if OK (serial number in val-buffer)
  *          false in case of error
@@ -325,43 +320,80 @@ float SCD30::getTemperatureF(void) {
  *****************************************************************/
 bool SCD30::getSerialNumber(char *val) {
     
-    uint8_t buff[10],data[2];
+  // request from SCD30
+  if (ReadFromSCD30(CMD_READ_SERIALNBR, (uint8_t *) val, SCD30_SERIAL_NUM_WORDS * 2) != SCD30_SERIAL_NUM_WORDS * 2) return(false);
+
+  val[(SCD30_SERIAL_NUM_WORDS * 2) + 1] = 0x0; // terminate
+
+  return(true);
+}
+
+/*
+ * Read from SCD30 the amount of requested bytes
+ * param val : to store the data received
+ * param cnt : number of data bytes requested
+ *
+ * return
+ * OK number of bytes read
+ * 0  error
+ */
+uint8_t SCD30::ReadFromSCD30(uint16_t command, uint8_t *val, uint8_t cnt)
+{
+    uint8_t buff[60],data[2];
     int     x, y;
-    
-    if (SCD_DEBUG >0)
-       p_printf(YELLOW,(char *) "Reading serialnumber from I2C address 0x%x\n",SCD30_ADDRESS);
 
-    if (sendCommand(CMD_READ_SERIALNBR) == false) return(false);
+    if (! sendCommand(command) ) return(0);
 
+    usleep (3); // datasheet may 2020
+           
     // start reading
-    if (readbytes((char *) buff, 9) == false) return(false);
+    if ( ! readbytes((char *) buff, (cnt / 2) *3) ) return(0);
  
-    for (x = 0, y = 0 ; x < 9 ; x++)
+    if (SCD_DEBUG > 0)  p_printf(YELLOW, (char *) "\nReceiving: " );
+    
+    for (x = 0, y = 0 ; x < (cnt / 2) *3 ; x++)
     {
+      if (SCD_DEBUG > 0) printf("0x%02X ", buff[x]);
+       
+      if (y == 2) {           // handle CRC
+          
+        if (! checkCrc(data, 2, buff[x])) return(0);
+        y = 0;
+       
+      }
+      else {                  // handle data
+        
+        *val++ = buff[x];
+        data[y++] = buff[x];
 
-      switch (x)
-      {
-        case 0:             // skip CRC
-        case 1:
-        case 3:
-        case 4:
-        case 6:
-        case 7:
-          *val++ = buff[x];
-          data[y++] = buff[x];
-          break;
-
-        default:           // handle CRC
-          if (checkCrc(data, 2, buff[x]) == false) return(false);
-          y = 0;
-          break;
        }
      }
-
+        
      if (SCD_DEBUG > 0) printf("\n");
-     *val = 0x0; // terminate
-     return(true);
+
+     return(cnt);
 }
+
+/**********************************************************
+ * @brief read 16 bit value from a register
+ * @param command :  command to sent
+ * @param val : return the read 16 bit value
+ * 
+ * @return
+ * true is OK, false error
+ *********************************************************/
+bool SCD30::getSettingValue(uint16_t command, uint16_t *val)
+{
+  uint8_t tmp[2];
+  *val = 0;
+
+  // request from SCD30
+  if (ReadFromSCD30(command, tmp, 2) != 2) return(false);
+
+  *val = tmp[0] << 8 | tmp[1];
+
+  return(true);
+} 
 
 /****************************************************************
  * @brief enables or disables the ASC See 1.3.6
@@ -610,7 +642,7 @@ bool SCD30::StartSingleMeasurement(void) {
     _asc = false;
     _interval = 2;
     
-    if (begin_scd30() == false)  goto stop_sm;
+    if (! begin_scd30() )  goto stop_sm;
 
     /* wait for max x times for data available from SCD30 */
     do
@@ -649,20 +681,14 @@ stop_sm:
  ****************************************************************/
 bool SCD30::dataAvailable() {
     
-    uint8_t data[3];
-    
-    if (sendCommand(COMMAND_GET_DATA_READY) == false) return(false);
-    
-    /* start receiving */
-    if (readbytes((char *) data, 3) == false) return(false);
+  uint8_t tmp[2];
 
-    /* check CRC */
-    if (checkCrc(data, 2, data[2]) == false) return(false);
-    
-    /* response[0] = MSB, response[1] = LSB */
-    if (data[1] == 1) return(true);
-    
-    return(false);
+  // request from SCD30
+  if (ReadFromSCD30(COMMAND_GET_DATA_READY, tmp, 2) != 2) return(false);
+
+  if (tmp[1] == 1) return(true);
+
+  return (false);
 }
 
 ////////////////////////////////////////////////////////////////////
@@ -758,84 +784,26 @@ bool SCD30::checkCrc(uint8_t *data, uint8_t len, uint8_t crc_rec) {
  ****************************************************************/
 bool SCD30::readMeasurement(){
     
-    uint8_t data[2];
-    uint8_t buff[20];
-    uint8_t y, x;
     uint32_t tempCO2 = 0;
     uint32_t tempHumidity = 0;
     uint32_t tempTemperature = 0;
+    uint8_t  temp[12];
 
     /* Verify we have data from the sensor */
-    if (dataAvailable() == false)   return (false);
-     
-    if (sendCommand(COMMAND_READ_MEASUREMENT) == false) return(false);
-
-    /* start receiving */
-    if (readbytes((char *) buff, 18) == false) return(false);
-
-    /* Parse buffer */
-    for (x = 0, y =0  ; x < 18 ; x++)
-    {
-      switch (x)
-      {
-        case 0:     // MSB CO2
-        case 1:
-        case 3:     // lsb C02
-        case 4:
-          data[y++] = buff[x];     // for crc
-          tempCO2 <<= 8;
-          tempCO2 |= buff[x];
-          
-          if (SCD_DEBUG > 0)
-          {
-              if (x == 0)  printf(" CO2 : ");
-              if (x == 4)  printf("0x%4x ", tempCO2);
-          }
-          
-          break;
-        case 6:
-        case 7:
-        case 9:
-        case 10:
-          data[y++] = buff[x];     // for crc
-          tempTemperature <<= 8;
-          tempTemperature |= buff[x];
-
-          if (SCD_DEBUG > 0)
-          {
-              if (x == 6)  printf(" temperature : ");
-              if (x == 10) printf("%d 0x%x ", tempTemperature & 0xfff, tempTemperature );
-          }
-
-          break;
-        case 12:
-        case 13:
-        case 15:
-        case 16:
-          data[y++] = buff[x];     // for crc
-          tempHumidity <<= 8;
-          tempHumidity |= buff[x];
-          
-          if (SCD_DEBUG > 0)
-          {
-              if (x == 12)  printf(" humidity : ");
-              if (x == 16)  printf("0x%4x\n", tempHumidity);
-          }
-
-          break;
-
-        default:   // check CRC
-          if (checkCrc(data, 2, buff[x]) == false) return(false);
-          y = 0;
-          break;
-      }
-    }
+    if (! dataAvailable() )   return (false);
+    
+    // request from SCD30
+    if (ReadFromSCD30(COMMAND_READ_MEASUREMENT, temp, 12) != 12) return(false);
   
+    tempCO2 = temp[0] << 24 | temp[1] << 16 | temp[2] << 8 | temp[3];
+    tempTemperature = temp[4] << 24 | temp[5] << 16 | temp[6] << 8 | temp[7];
+    tempHumidity  = temp[8] << 24 | temp[9] << 16 | temp[10] << 8 | temp[11];
+      
     /* Now copy the uint32s into their associated floats */
     memcpy(&_co2, &tempCO2, sizeof(_co2));
     memcpy(&_temperature, &tempTemperature, sizeof(_temperature));
     memcpy(&_humidity, &tempHumidity, sizeof(_humidity));
-    
+  
     /* Mark our global variables as fresh */
     co2HasBeenReported = false;
     humidityHasBeenReported = false;
@@ -910,6 +878,9 @@ void SCD30::debug_cmd(uint16_t command) {
         case 0x0006:
             p_printf(YELLOW, (char *)"CMD_START_SINGLE_MEAS");
             break;
+        case 0xD100:
+            p_printf(YELLOW, (char *)"CMD_GET_FW_LEVEL");
+            break;
         default:
             p_printf(YELLOW, (char *)"COMMAND_UNKNOWN");
             break;
@@ -960,22 +931,11 @@ bool SCD30::sendCommand(uint16_t command) {
 bool SCD30::sendCommand(uint16_t command, uint16_t arguments, uint8_t len)
 {
     uint8_t buff[5];
-    int retry = 3;
+    int retry = 3, x;
     Wstatus result;
     
     /* set slave address for SCD30 */
     TWI.setSlave(settings.I2C_Address);
-
-    if (SCD_DEBUG > 0)
-    {
-       p_printf(YELLOW, (char *) "sending to I2C address 0x%x, ",settings.I2C_Address);
-       debug_cmd(command);
-       
-       if (len > 2)
-        p_printf(YELLOW, (char *)", arguments 0x%04x\n",arguments);
-       else
-        printf("\n");
-    }
 
     buff[0] = (command >> 8); //MSB
     buff[1] = (command & 0xFF); //LSB
@@ -986,6 +946,19 @@ bool SCD30::sendCommand(uint16_t command, uint16_t arguments, uint8_t len)
         buff[2] = (arguments >> 8); //MSB
         buff[3] = (arguments & 0xFF); //LSB
         buff[4] = computeCRC8(&buff[2], 2); // Calc CRC on the arguments only, not the command
+    }
+
+    if (SCD_DEBUG > 0)
+    {
+       p_printf(YELLOW, (char *) "sending to I2C address 0x%x, ",settings.I2C_Address);
+       debug_cmd(command);
+       
+       p_printf(YELLOW, (char *) "\n\tbytes: ");
+       
+       for (x = 0; x < len ;x++)
+        p_printf(YELLOW, (char *)" 0x%02x",buff[x]);
+       
+       printf("\n");
     }
     
     while (1)
